@@ -1,0 +1,3 @@
+[submodule "android-prog"]
+	path = android-prog
+	url = https://github.com/iliyagitH/android-prog
