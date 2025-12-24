@@ -56,14 +56,14 @@ int main(int argc, char const *argv[]) {
         return -1;
     }
     
-    printf("✅ Подключено к серверу. \n");
+    printf("Подключено к серверу. \n");
     
     send(sock, message_to_send, strlen(message_to_send), 0);
-    printf("✉️ Сообщение отправлено: %s\n", message_to_send);
+    printf("Сообщение отправлено: %s\n", message_to_send);
     
     int valread = recv(sock, buffer, BUFFER_SIZE, 0);
     if (valread > 0) {
-        printf("⬅️ Ответ сервера: %s\n", buffer);
+        printf("Ответ сервера: %s\n", buffer);
     }
     
     close(sock);
