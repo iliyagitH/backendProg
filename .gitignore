@@ -1,0 +1,10 @@
+build/
+.vscode/
+third_party/
+*.exe
+*.obj
+*.o
+*.user
+*.json
+*.offset
+git.txt
