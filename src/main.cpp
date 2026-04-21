@@ -116,6 +116,50 @@ CellRecord parseCell(const json& c) {
     return r;
 }
 
+void load_archive(Telemetry* data) {
+    std::ifstream f("server_log.json");
+    if (!f.is_open()) {
+        std::cout << "[Archive] Файл не найден, начинаем с чистого листа\n";
+        return;
+    }
+
+    std::string line;
+    int loaded = 0;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        json entry;
+        try { entry = json::parse(line); }
+        catch (...) { continue; }
+
+        if (entry.contains("location")) {
+            double lat = entry["location"].value("Latitude", 0.0);
+            double lon = entry["location"].value("Longitude", 0.0);
+            double alt = entry["location"].value("Altitude", 0.0);
+
+            std::lock_guard<std::mutex> lk(data->mtx);
+            data->latitude = lat;
+            data->longitude = lon;
+            data->altitude = alt;
+        }
+
+        if (entry.contains("telephony") && entry["telephony"].is_array()) {
+            for (auto& c : entry["telephony"]) {
+                CellRecord cell = parseCell(c);
+                if (cell.isRegistered || entry["telephony"].size() == 1) {
+                    std::lock_guard<std::mutex> lk(data->mtx);
+                    data->history_rsrp.push_back((float)cell.rsrp);
+                    data->history_rssi.push_back((float)cell.rssi);
+                    data->history_sinr.push_back((float)cell.sinr);
+                    data->history_rsrq.push_back((float)cell.rsrq);
+                    break;
+                }
+            }
+        }
+        loaded++;
+    }
+    std::cout << "[Archive] Загружено записей: " << loaded << "\n";
+}
+
 void run_server(Telemetry* data, std::atomic<bool>* stop) {
     zmq::context_t ctx(1);
     zmq::socket_t sock(ctx, zmq::socket_type::pull);
@@ -310,6 +354,8 @@ void run_gui(Telemetry* data, std::atomic<bool>* stop) {
 int main() {
     static Telemetry shared_data;
     std::atomic<bool> stopFlag{false};
+
+    load_archive(&shared_data);
 
     std::thread server_thread(run_server, &shared_data, &stopFlag);
     run_gui(&shared_data, &stopFlag);
