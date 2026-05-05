@@ -4,6 +4,7 @@ project(telemetry_system)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+find_package(libpqxx CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(cppzmq CONFIG REQUIRED)
 find_package(Threads REQUIRED)
@@ -32,6 +33,7 @@ target_include_directories(imgui PUBLIC
 
 set(PROJECT_SOURCES
     ${SRC_DIR}/main.cpp
+    ${SRC_DIR}/database.cpp
 )
 
 add_executable(main ${PROJECT_SOURCES})
@@ -52,6 +54,7 @@ target_include_directories(main PRIVATE
 target_link_libraries(main PRIVATE
     imgui
     Threads::Threads
+    libpqxx::pqxx
     nlohmann_json::nlohmann_json
     cppzmq
     OpenGL::GL

@@ -5,9 +5,12 @@
 #include <atomic>
 #include <vector>
 #include <string>
+#include <map>
 #include <iostream>
 #include <fstream>
 #include <cstring>
+#include <chrono>
+#include <ctime>
 
 #include <GL/glew.h>
 #include <SDL.h>
@@ -19,148 +22,118 @@
 #include <zmq.hpp>
 #include "json.hpp"
 
+#include "telemetry.h"
+#include "database.h"
+
 using json = nlohmann::json;
 
-struct CellRecord {
-    std::string standard = "Unknown";
-    std::string mcc, mnc;
-    int pci = -1;
-    int timingAdvance = 0;
-    bool isRegistered = false;
+int getInt(const json& c, std::initializer_list<const char*> keys, int def) {
+    for (const char* k : keys) {
+        if (!c.contains(k)) continue;
+        try {
+            int val = def;
+            if (c[k].is_number_integer()) val = c[k].get<int>();
+            else if (c[k].is_number_float()) val = (int)c[k].get<double>();
+            else if (c[k].is_string()) {
+                std::string s = c[k].get<std::string>();
+                if (!s.empty()) val = std::stoi(s);
+                else continue;
+            } else continue;
 
-    int rsrp = -140, rssi = 0, rsrq = 0, sinr = 0;
-    int earfcn = -1, band = -1;
-    std::string tac, cellId;
-
-    int arfcn = -1, bsic = -1, dbm = -140;
-    std::string lac;
-
-    int nrarfcn = -1;
-    int ssRsrp = -140, ssRsrq = 0, ssSinr = 0;
-    std::string nci;
-};
-
-struct Telemetry {
-    std::mutex mtx;
-    double latitude = 0.0;
-    double longitude = 0.0;
-    double altitude = 0.0;
-    std::string currentTime;
-
-    std::vector<CellRecord> cells;
-
-    std::vector<float> history_rsrp;
-    std::vector<float> history_rssi;
-    std::vector<float> history_sinr;
-    std::vector<float> history_rsrq;
-};
-
-int getInt(const json& c, const char* key, int def) {
-    if (!c.contains(key)) return def;
-    try {
-        if (c[key].is_number()) return c[key].get<int>();
-        if (c[key].is_string()) {
-            std::string s = c[key].get<std::string>();
-            if (!s.empty()) return std::stoi(s);
-        }
-    } catch (...) {}
+            if (val == 2147483647 || val == -2147483648) return def;
+            return val;
+        } catch (...) {}
+    }
     return def;
 }
 
-std::string getStr(const json& c, const char* key) {
-    if (!c.contains(key)) return "";
-    try {
-        if (c[key].is_string()) return c[key].get<std::string>();
-        if (c[key].is_number()) return std::to_string(c[key].get<int>());
-    } catch (...) {}
+std::string getStr(const json& c, std::initializer_list<const char*> keys) {
+    for (const char* k : keys) {
+        if (!c.contains(k)) continue;
+        try {
+            if (c[k].is_string()) return c[k].get<std::string>();
+            if (c[k].is_number_integer()) return std::to_string(c[k].get<int>());
+        } catch (...) {}
+    }
     return "";
 }
 
 CellRecord parseCell(const json& c) {
     CellRecord r;
 
-    if (c.contains("isRegistered")) {
-        try { r.isRegistered = c["isRegistered"].get<bool>(); } catch (...) {}
+    for (const char* k : {"isRegistered"}) {
+        if (c.contains(k)) {
+            try { r.isRegistered = c[k].get<bool>(); } catch (...) {}
+        }
     }
-    r.pci = getInt(c, "pci", -1);
-    r.mcc = getStr(c, "mcc");
-    r.mnc = getStr(c, "mnc");
+    r.pci = getInt(c, {"pci", "PCI"}, -1);
+    r.mcc = getStr(c, {"mcc", "MCC"});
+    r.mnc = getStr(c, {"mnc", "MNC"});
 
-    std::string type = getStr(c, "type");
+    std::string type = getStr(c, {"type", "Type"});
 
-    if (type == "LTE") {
+    if (type == "LTE" || type == "CellInfoLte") {
         r.standard = "LTE";
-        r.rsrp = getInt(c, "rsrp", -140);
-        r.rssi = getInt(c, "rssi", 0);
-        r.rsrq = getInt(c, "rsrq", 0);
-        r.sinr = getInt(c, "rssnr", 0);
-        r.earfcn = getInt(c, "earfcn", -1);
-        r.tac = getStr(c, "tac");
-        r.timingAdvance = getInt(c, "timingAdvance", 0);
-    } else if (type == "GSM") {
+        r.rsrp = getInt(c, {"rsrp", "RSRP"}, -140);
+        r.rssi = getInt(c, {"rssi", "RSSI"}, 0);
+        r.rsrq = getInt(c, {"rsrq", "RSRQ"}, 0);
+        r.sinr = getInt(c, {"sinr", "rssnr", "RSSNR"}, 0);
+        r.earfcn = getInt(c, {"earfcn", "EARFCN"}, -1);
+        r.tac = getStr(c, {"tac", "TAC"});
+        r.timingAdvance = getInt(c, {"timingAdvance", "Timing Advance"}, 0);
+    } else if (type == "GSM" || type == "CellInfoGsm") {
         r.standard = "GSM";
-        r.arfcn = getInt(c, "arfcn", -1);
-        r.bsic = getInt(c, "bsic", -1);
-        r.dbm = getInt(c, "dbm", -140);
-        r.lac = getStr(c, "lac");
-    } else if (type == "NR") {
+        r.arfcn = getInt(c, {"arfcn", "ARFCN"}, -1);
+        r.bsic = getInt(c, {"bsic", "BSIC"}, -1);
+        r.dbm = getInt(c, {"dbm", "DBM"}, -140);
+        r.lac = getStr(c, {"lac", "LAC"});
+        r.rssi = getInt(c, {"rssi", "RSSI"}, 0);
+    } else if (type == "NR" || type == "5G_NR" || type == "CellInfoNr") {
         r.standard = "5G_NR";
-        r.nrarfcn = getInt(c, "nrarfcn", -1);
-        r.nci = getStr(c, "nci");
-        r.ssRsrp = getInt(c, "ssRsrp", -140);
-        r.ssRsrq = getInt(c, "ssRsrq", 0);
-        r.ssSinr = getInt(c, "ssSinr", 0);
+        r.nrarfcn = getInt(c, {"nrarfcn", "NRARFCN"}, -1);
+        r.nci = getStr(c, {"nci", "NCI"});
+        r.ssRsrp = getInt(c, {"ssRsrp", "SSRsrp"}, -140);
+        r.ssRsrq = getInt(c, {"ssRsrq", "SSRsrq"}, 0);
+        r.ssSinr = getInt(c, {"ssSinr", "SSSinr"}, 0);
         r.rsrp = r.ssRsrp;
         r.sinr = r.ssSinr;
     }
     return r;
 }
 
-void load_archive(Telemetry* data) {
-    std::ifstream f("server_log.json");
-    if (!f.is_open()) {
-        std::cout << "[Archive] Файл не найден, начинаем с чистого листа\n";
-        return;
-    }
+long long parseTime(const std::string& ct) {
+    long long ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    if (ct.empty()) return ts;
 
-    std::string line;
-    int loaded = 0;
-    while (std::getline(f, line)) {
-        if (line.empty()) continue;
-        json entry;
-        try { entry = json::parse(line); }
-        catch (...) { continue; }
-
-        if (entry.contains("location")) {
-            double lat = entry["location"].value("Latitude", 0.0);
-            double lon = entry["location"].value("Longitude", 0.0);
-            double alt = entry["location"].value("Altitude", 0.0);
-
-            std::lock_guard<std::mutex> lk(data->mtx);
-            data->latitude = lat;
-            data->longitude = lon;
-            data->altitude = alt;
+    char dow[8] = {}, mon[8] = {};
+    int day = 0, hour = 0, min = 0, sec = 0, year = 0;
+    int n = sscanf(ct.c_str(), "%7s %7s %d %d:%d:%d %*s %d",
+                   dow, mon, &day, &hour, &min, &sec, &year);
+    if (n == 7) {
+        const char* months[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                "Jul","Aug","Sep","Oct","Nov","Dec"};
+        int month = -1;
+        for (int i = 0; i < 12; i++) {
+            if (strcmp(mon, months[i]) == 0) { month = i; break; }
         }
-
-        if (entry.contains("telephony") && entry["telephony"].is_array()) {
-            for (auto& c : entry["telephony"]) {
-                CellRecord cell = parseCell(c);
-                if (cell.isRegistered || entry["telephony"].size() == 1) {
-                    std::lock_guard<std::mutex> lk(data->mtx);
-                    data->history_rsrp.push_back((float)cell.rsrp);
-                    data->history_rssi.push_back((float)cell.rssi);
-                    data->history_sinr.push_back((float)cell.sinr);
-                    data->history_rsrq.push_back((float)cell.rsrq);
-                    break;
-                }
-            }
+        if (month >= 0 && year > 2000) {
+            struct tm tm_val = {};
+            tm_val.tm_year = year - 1900;
+            tm_val.tm_mon = month;
+            tm_val.tm_mday = day;
+            tm_val.tm_hour = hour;
+            tm_val.tm_min = min;
+            tm_val.tm_sec = sec;
+            tm_val.tm_isdst = -1;
+            time_t t = mktime(&tm_val);
+            if (t != -1) ts = (long long)t * 1000LL;
         }
-        loaded++;
     }
-    std::cout << "[Archive] Загружено записей: " << loaded << "\n";
+    return ts;
 }
 
-void run_server(Telemetry* data, std::atomic<bool>* stop) {
+void run_server(Telemetry* data, Database* db, std::atomic<bool>* stop) {
     zmq::context_t ctx(1);
     zmq::socket_t sock(ctx, zmq::socket_type::pull);
     sock.set(zmq::sockopt::rcvtimeo, 200);
@@ -197,43 +170,98 @@ void run_server(Telemetry* data, std::atomic<bool>* stop) {
                 ct = entry["location"].value("Current Time", "");
             }
 
+            long long ts = parseTime(ct);
+
             std::vector<CellRecord> parsed;
-            if (entry.contains("telephony") && entry["telephony"].is_array()) {
-                for (auto& c : entry["telephony"]) {
-                    parsed.push_back(parseCell(c));
+            if (entry.contains("telephony")) {
+                if (entry["telephony"].is_array()) {
+                    for (auto& c : entry["telephony"]) {
+                        parsed.push_back(parseCell(c));
+                    }
+                } else if (entry["telephony"].is_object()) {
+                    parsed.push_back(parseCell(entry["telephony"]));
                 }
             }
 
-            std::lock_guard<std::mutex> lk(data->mtx);
-            data->latitude = lat;
-            data->longitude = lon;
-            data->altitude = alt;
-            data->currentTime = ct;
-            data->cells = parsed;
+            {
+                std::lock_guard<std::mutex> lk(data->mtx);
+                data->latitude = lat;
+                data->longitude = lon;
+                data->altitude = alt;
+                data->currentTime = ct;
+                data->cells = parsed;
 
-            for (auto& c : parsed) {
-                if (c.isRegistered || parsed.size() == 1) {
-                    data->history_rsrp.push_back((float)c.rsrp);
-                    data->history_rssi.push_back((float)c.rssi);
-                    data->history_sinr.push_back((float)c.sinr);
-                    data->history_rsrq.push_back((float)c.rsrq);
-                    break;
+                for (auto& c : parsed) {
+                    if (c.isRegistered || parsed.size() == 1) {
+                        data->history_rsrp.push_back((float)c.rsrp);
+                        data->history_rssi.push_back((float)c.rssi);
+                        data->history_sinr.push_back((float)c.sinr);
+                        data->history_rsrq.push_back((float)c.rsrq);
+                        data->history_pci.push_back((float)c.pci);
+                        break;
+                    }
                 }
             }
 
             std::ofstream out("server_log.json", std::ios::app);
             out << entry.dump() << "\n";
+
+            if (db->isConnected() && !parsed.empty()) {
+                for (auto& cell : parsed) {
+                    db->insertRecord(lat, lon, alt, cell, ts);
+                }
+            }
         }
     }
     std::cout << "[ZMQ] Сервер остановлен\n";
 }
 
-void drawChart(const char* label, std::vector<float>& series, ImVec4 col) {
-    if (ImPlot::BeginPlot(label, ImVec2(-1, 150))) {
+ImVec4 pciColor(int pci) {
+    float h = (float)((pci * 47) % 360) / 360.0f;
+    float r, g, b;
+    int i = (int)(h * 6.0f);
+    float f = h * 6.0f - i;
+    float q = 1.0f - f;
+    switch (i % 6) {
+        case 0: r = 1; g = f; b = 0; break;
+        case 1: r = q; g = 1; b = 0; break;
+        case 2: r = 0; g = 1; b = f; break;
+        case 3: r = 0; g = q; b = 1; break;
+        case 4: r = f; g = 0; b = 1; break;
+        default: r = 1; g = 0; b = q; break;
+    }
+    return ImVec4(r, g, b, 1.0f);
+}
+
+void drawChartByPci(const char* label, Telemetry* data,
+                    std::vector<float>& series) {
+    std::vector<float> values, pcis;
+    {
+        std::lock_guard<std::mutex> lk(data->mtx);
+        values = series;
+        pcis = data->history_pci;
+    }
+
+    if (ImPlot::BeginPlot(label, ImVec2(-1, 160))) {
         ImPlot::SetupAxis(ImAxis_X1, nullptr, ImPlotAxisFlags_NoTickLabels);
-        ImPlot::SetNextLineStyle(col, 1.5f);
-        if (!series.empty()) {
-            ImPlot::PlotLine("##l", series.data(), (int)series.size());
+
+        std::map<int, std::vector<float>> byPci;
+        std::map<int, std::vector<float>> byPciX;
+        for (size_t i = 0; i < values.size() && i < pcis.size(); i++) {
+            int pci = (int)pcis[i];
+            float v = values[i];
+            if (v < -200.0f || v > 200.0f) continue;
+            byPci[pci].push_back(v);
+            byPciX[pci].push_back((float)i);
+        }
+
+        for (auto& pair : byPci) {
+            int pci = pair.first;
+            std::string name = "PCI " + std::to_string(pci);
+            ImPlot::SetNextLineStyle(pciColor(pci), 1.5f);
+            ImPlot::PlotLine(name.c_str(),
+                byPciX[pci].data(), pair.second.data(),
+                (int)pair.second.size());
         }
         ImPlot::EndPlot();
     }
@@ -248,7 +276,7 @@ void run_gui(Telemetry* data, std::atomic<bool>* stop) {
     SDL_Window* window = SDL_CreateWindow(
         "Telemetry Monitor",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        1000, 700,
+        1000, 750,
         SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
 
     SDL_GLContext glCtx = SDL_GL_CreateContext(window);
@@ -284,7 +312,6 @@ void run_gui(Telemetry* data, std::atomic<bool>* stop) {
 
         double lat, lon, alt;
         std::string ct;
-        std::vector<float> rsrp, rssi, sinr, rsrq;
         std::vector<CellRecord> cells;
         {
             std::lock_guard<std::mutex> lk(data->mtx);
@@ -292,10 +319,6 @@ void run_gui(Telemetry* data, std::atomic<bool>* stop) {
             lon = data->longitude;
             alt = data->altitude;
             ct = data->currentTime;
-            rsrp = data->history_rsrp;
-            rssi = data->history_rssi;
-            sinr = data->history_sinr;
-            rsrq = data->history_rsrq;
             cells = data->cells;
         }
 
@@ -306,11 +329,10 @@ void run_gui(Telemetry* data, std::atomic<bool>* stop) {
         ImGui::Text("Время: %s", ct.c_str());
 
         ImGui::Separator();
-        ImGui::Text("Графики уровня сигнала");
-        drawChart("RSRP (dBm)", rsrp, ImVec4(1.0f, 0.4f, 0.1f, 1));
-        drawChart("RSSI (dBm)", rssi, ImVec4(1.0f, 0.9f, 0.1f, 1));
-        drawChart("SINR (dB)", sinr, ImVec4(0.2f, 1.0f, 0.3f, 1));
-        drawChart("RSRQ (dB)", rsrq, ImVec4(0.2f, 0.7f, 1.0f, 1));
+        ImGui::Text("Графики уровня сигнала (по PCI)");
+        drawChartByPci("RSRP (dBm)", data, data->history_rsrp);
+        drawChartByPci("RSSI (dBm)", data, data->history_rssi);
+        drawChartByPci("SINR (dB)", data, data->history_sinr);
 
         ImGui::Separator();
         ImGui::Text("Соты: %d", (int)cells.size());
@@ -351,13 +373,35 @@ void run_gui(Telemetry* data, std::atomic<bool>* stop) {
     SDL_Quit();
 }
 
+void load_history(Telemetry* data, Database* db) {
+    if (!db->isConnected()) {
+        std::cout << "[Startup] БД недоступна\n";
+        return;
+    }
+    auto rows = db->loadHistory();
+    std::lock_guard<std::mutex> lk(data->mtx);
+    for (auto& r : rows) {
+        data->latitude = r.lat;
+        data->longitude = r.lon;
+        data->altitude = r.alt;
+        data->history_rsrp.push_back(r.rsrp);
+        data->history_rssi.push_back(r.rssi);
+        data->history_sinr.push_back(r.sinr);
+        data->history_rsrq.push_back(r.rsrq);
+        data->history_pci.push_back((float)r.pci);
+    }
+}
+
 int main() {
     static Telemetry shared_data;
     std::atomic<bool> stopFlag{false};
 
-    load_archive(&shared_data);
+    Database::Config dbCfg;
+    Database db(dbCfg);
 
-    std::thread server_thread(run_server, &shared_data, &stopFlag);
+    load_history(&shared_data, &db);
+
+    std::thread server_thread(run_server, &shared_data, &db, &stopFlag);
     run_gui(&shared_data, &stopFlag);
 
     stopFlag.store(true);
