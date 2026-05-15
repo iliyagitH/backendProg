@@ -1,7 +1,5 @@
 #pragma once
-#include <string>
-#include <vector>
-#include <mutex>
+#include "common.h"
 
 struct CellRecord {
     std::string standard = "Unknown";
@@ -20,20 +18,20 @@ struct CellRecord {
     int nrarfcn = -1;
     int ssRsrp = -140, ssRsrq = 0, ssSinr = 0;
     std::string nci;
+
+    int signalStrength = -140;
 };
 
 struct Telemetry {
     std::mutex mtx;
-    double latitude = 0.0;
-    double longitude = 0.0;
-    double altitude = 0.0;
-    std::string currentTime;
-
+    double latitude = 0.0, longitude = 0.0, altitude = 0.0;
+    std::vector<double> path_lat, path_lon;
     std::vector<CellRecord> cells;
+    std::vector<float> history_rsrp, history_rssi, history_sinr, history_rsrq, history_pci;
+    bool has_new_data = false;
 
-    std::vector<float> history_rsrp;
-    std::vector<float> history_rssi;
-    std::vector<float> history_sinr;
-    std::vector<float> history_rsrq;
-    std::vector<float> history_pci;
+    void clear();
+    void trimHistory();
+    void addPoint(double lat, double lon, double alt);
+    void addCellData(const CellRecord& cell);
 };

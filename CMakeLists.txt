@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(libpqxx CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(cppzmq CONFIG REQUIRED)
+find_package(CURL REQUIRED)
 find_package(Threads REQUIRED)
 find_package(OpenGL REQUIRED)
 
@@ -33,7 +34,17 @@ target_include_directories(imgui PUBLIC
 
 set(PROJECT_SOURCES
     ${SRC_DIR}/main.cpp
+    ${SRC_DIR}/gui.cpp
+    ${SRC_DIR}/startup.cpp
+    ${SRC_DIR}/telemetry.cpp
+    ${SRC_DIR}/math_osm.cpp
     ${SRC_DIR}/database.cpp
+    ${SRC_DIR}/curl_utils.cpp
+    ${SRC_DIR}/tile_manager.cpp
+    ${SRC_DIR}/map_renderer.cpp
+    ${SRC_DIR}/telephony_parser.cpp
+    ${SRC_DIR}/archive_loader.cpp
+    ${SRC_DIR}/zmq_server.cpp
 )
 
 add_executable(main ${PROJECT_SOURCES})
@@ -57,6 +68,7 @@ target_link_libraries(main PRIVATE
     libpqxx::pqxx
     nlohmann_json::nlohmann_json
     cppzmq
+    CURL::libcurl
     OpenGL::GL
     "C:/dev_libs/SDL2/lib/x64/SDL2.lib"
     "C:/dev_libs/SDL2/lib/x64/SDL2main.lib"

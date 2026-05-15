@@ -1,9 +1,5 @@
 #pragma once
-#include <string>
-#include <vector>
-#include <mutex>
-#include <memory>
-#include <pqxx/pqxx>
+#include "common.h"
 #include "telemetry.h"
 
 class Database {
@@ -20,6 +16,7 @@ public:
         double lat, lon, alt;
         float  rsrp, rssi, sinr, rsrq;
         int    pci;
+        int    earfcn;
         long long ts;
     };
 
@@ -35,8 +32,8 @@ private:
     bool tryConnect();
     void ensureTable();
 
-    Config cfg_;
+    Config                       cfg_;
     std::unique_ptr<pqxx::connection> conn_;
-    std::mutex mtx_;
-    bool connected_ = false;
+    std::mutex                   mtx_;
+    bool                         connected_ = false;
 };
