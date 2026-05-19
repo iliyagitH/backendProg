@@ -89,10 +89,124 @@ void drawChartByPci(Telemetry& data, const char* label,
 
 void drawCharts(Telemetry& data) {
     float avail  = ImGui::GetContentRegionAvail().y;
-    float chartH = avail * 0.22f;
+    float chartH = avail * 0.17f;
     drawChartByPci(data, "RSRP (dBm)", data.history_rsrp, chartH);
     drawChartByPci(data, "RSSI (dBm)", data.history_rssi, chartH);
     drawChartByPci(data, "SINR (dB)",  data.history_sinr, chartH);
+    drawChartByPci(data, "RSRQ (dB)",  data.history_rsrq, chartH);
+}
+
+void drawHeatmapPanel(Gui::State& st, HeatmapGenerator& hm) {
+    ImGui::Separator();
+    bool hmDirty = false;
+
+    if (ImGui::CollapsingHeader("Тепловая карта (IDW)",
+            ImGuiTreeNodeFlags_DefaultOpen))
+    {
+
+        const char* critNames[] = { "RSRP", "RSRQ", "RSSI", "Altitude" };
+        if (ImGui::Combo("Критерий##hm", &st.hmCritIdx, critNames, 4))
+            hmDirty = true;
+
+        if (ImGui::SliderFloat("Радиус (м)##hm",
+                &st.hmRadius, 10.0f, 500.0f, "%.0f м"))
+            hmDirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(
+                "Рекомендации по данным архива (медиана шага 4 м):\n"
+                "  zoom 13 (весь город) : 300-500 м\n"
+                "  zoom 15 (район)      : 100-200 м  ← дефолт 150 м\n"
+                "  zoom 17 (улица)      :  20-50 м");
+
+        {
+            std::vector<int> earfcns = hm.availableEarfcns();
+            std::vector<std::string> labels;
+            labels.emplace_back("Все EARFCN");
+            for (int e : earfcns) labels.push_back(std::to_string(e));
+            std::vector<const char*> cstrs;
+            for (const auto& s : labels) cstrs.push_back(s.c_str());
+            if (st.hmEarfcnIdx >= (int)cstrs.size()) st.hmEarfcnIdx = 0;
+            if (ImGui::Combo("EARFCN##hm", &st.hmEarfcnIdx,
+                    cstrs.data(), (int)cstrs.size()))
+                hmDirty = true;
+        }
+
+        {
+            auto hist = hm.pciHistogram();
+            std::vector<std::pair<int,size_t>> sorted(hist.begin(), hist.end());
+            std::sort(sorted.begin(), sorted.end(),
+                [](const auto& a, const auto& b){ return a.second > b.second; });
+
+            if (st.hmFirstRun && !sorted.empty()) {
+                st.hmSelectedPcis.clear();
+                st.hmSelectedPcis.insert(sorted[0].first);
+                st.hmFirstRun = false;
+                hmDirty        = true;
+            }
+
+            ImGui::Text("PCI:");
+            ImGui::SameLine();
+
+            if (ImGui::SmallButton("Выбрать все##pci")) {
+                st.hmSelectedPcis.clear();
+                for (const auto& [pci, _] : sorted)
+                    st.hmSelectedPcis.insert(pci);
+                hmDirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Сбросить##pci")) {
+                st.hmSelectedPcis.clear();
+                hmDirty = true;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%zu / %zu)", st.hmSelectedPcis.size(), sorted.size());
+
+            ImGui::BeginChild("##pci_list", ImVec2(0, 120), true);
+            for (const auto& [pci, cnt] : sorted) {
+                bool sel = st.hmSelectedPcis.count(pci) > 0;
+                char lbl[64];
+                std::snprintf(lbl, sizeof(lbl),
+                    "PCI %d  (%zu pts)##pci%d", pci, cnt, pci);
+                if (ImGui::Checkbox(lbl, &sel)) {
+                    if (sel) st.hmSelectedPcis.insert(pci);
+                    else     st.hmSelectedPcis.erase(pci);
+                    hmDirty = true;
+                }
+            }
+            ImGui::EndChild();
+        }
+
+        if (hm.busy())
+            ImGui::ProgressBar(hm.progress() / 100.0f,
+                ImVec2(-1, 0), "Вычисление...");
+        else
+            ImGui::ProgressBar(1.0f, ImVec2(-1, 0), "Готово");
+        if (ImGui::Button("Регенерировать##hm")) hmDirty = true;
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("RSRP:");
+        ImGui::SameLine(); ImGui::TextColored({0.86f,0.12f,0.12f,1}, "■ >-80");
+        ImGui::SameLine(); ImGui::TextColored({0.94f,0.78f,0.24f,1}, " ■ -90");
+        ImGui::SameLine(); ImGui::TextColored({0.24f,0.78f,0.86f,1}, " ■ -100");
+        ImGui::SameLine(); ImGui::TextColored({0.16f,0.24f,0.71f,1}, " ■ -110");
+    }
+
+    if (st.hmLastZoom != st.zoom) { st.hmLastZoom = st.zoom; hmDirty = true; }
+
+    if (hmDirty && !hm.busy()) {
+        std::vector<int> earfcns = hm.availableEarfcns();
+        int earfcnFilter = (st.hmEarfcnIdx == 0 ||
+                            st.hmEarfcnIdx > (int)earfcns.size())
+                           ? -1 : earfcns[st.hmEarfcnIdx - 1];
+        HeatmapGenerator::Settings s;
+        s.criterion    = (HeatmapGenerator::Criterion)st.hmCritIdx;
+        s.radiusMeters = st.hmRadius;
+        s.zoom         = st.zoom;
+        s.selectedPcis = st.hmSelectedPcis;
+        s.earfcn       = earfcnFilter;
+        hm.updateSettings(s);
+        hm.requestRegenerate();
+    }
 }
 
 void drawCellsTable(Telemetry& data) {
@@ -126,8 +240,8 @@ void drawCellsTable(Telemetry& data) {
                 ImGui::Text("EARFCN:%d B:%d TAC:%s TA:%d",
                     c.earfcn, c.band, c.tac.c_str(), c.timingAdvance);
             else if (c.standard == "GSM")
-                ImGui::Text("ARFCN:%d BSIC:%d LAC:%s dBm:%d",
-                    c.arfcn, c.bsic, c.lac.c_str(), c.dbm);
+                ImGui::Text("ARFCN:%d BSIC:%d LAC:%s dBm:%d TA:%d",
+                    c.arfcn, c.bsic, c.lac.c_str(), c.dbm, c.timingAdvance);
             else if (c.standard == "5G_NR")
                 ImGui::Text("NRARFCN:%d ssRSRP:%d ssRSRQ:%d ssSINR:%d NCI:%s",
                     c.nrarfcn, c.ssRsrp, c.ssRsrq, c.ssSinr, c.nci.c_str());
@@ -171,7 +285,8 @@ bool Gui::init() {
 }
 
 void Gui::runLoop(State& st, Telemetry& data, TileManager& tm,
-                  MapRenderer& mr, std::atomic<bool>& stopFlag) {
+                  MapRenderer& mr, HeatmapGenerator& hm,
+                  std::atomic<bool>& stopFlag) {
     ImGuiIO& io = ImGui::GetIO();
 
     while (!stopFlag.load()) {
@@ -182,6 +297,8 @@ void Gui::runLoop(State& st, Telemetry& data, TileManager& tm,
         }
 
         tm.uploadPending();
+        if (hm.consumeUpdatedFlag())
+            mr.invalidateHeatmap();
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
@@ -202,6 +319,7 @@ void Gui::runLoop(State& st, Telemetry& data, TileManager& tm,
         ImGui::NextColumn();
 
         drawCharts(data);
+        drawHeatmapPanel(st, hm);
         drawCellsTable(data);
 
         ImGui::Columns(1);

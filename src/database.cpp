@@ -53,6 +53,7 @@ std::vector<Database::DbRow> Database::loadHistory() {
 
     try {
         pqxx::work txn(*conn_);
+
         auto res = txn.exec(
             "SELECT lat, lon, alt, rsrp, rssi, sinr, rsrq, pci, earfcn, ts "
             "FROM user_equipment "

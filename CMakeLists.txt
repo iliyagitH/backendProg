@@ -15,6 +15,7 @@ set(THIRD_PARTY_DIR ${PROJECT_SOURCE_DIR}/third_party)
 set(SRC_DIR         ${PROJECT_SOURCE_DIR}/src)
 set(INC_DIR         ${PROJECT_SOURCE_DIR}/include)
 
+# --- ImGui + ImPlot ---
 add_library(imgui STATIC
     ${THIRD_PARTY_DIR}/imgui/imgui.cpp
     ${THIRD_PARTY_DIR}/imgui/imgui_draw.cpp
@@ -32,10 +33,11 @@ target_include_directories(imgui PUBLIC
     "C:/dev_libs/SDL2/include"
 )
 
+# --- Исходники проекта ---
 set(PROJECT_SOURCES
     ${SRC_DIR}/main.cpp
-    ${SRC_DIR}/gui.cpp
     ${SRC_DIR}/startup.cpp
+    ${SRC_DIR}/gui.cpp
     ${SRC_DIR}/telemetry.cpp
     ${SRC_DIR}/math_osm.cpp
     ${SRC_DIR}/database.cpp
@@ -45,6 +47,7 @@ set(PROJECT_SOURCES
     ${SRC_DIR}/telephony_parser.cpp
     ${SRC_DIR}/archive_loader.cpp
     ${SRC_DIR}/zmq_server.cpp
+    ${SRC_DIR}/heatmap_generator.cpp
 )
 
 add_executable(main ${PROJECT_SOURCES})

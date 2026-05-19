@@ -1,3 +1,4 @@
+#include "stb_image.h"
 #include "map_renderer.h"
 #include "math_osm.h"
 
@@ -92,5 +93,76 @@ void MapRenderer::render(TileManager& tm, const Telemetry& data, int zoom) {
             ImVec4(0.1f, 0.4f, 1.0f, 1.0f), 2.0f,
             ImVec4(0.1f, 0.4f, 1.0f, 0.5f));
         ImPlot::PlotScatter("##pos", &curX, &curY, 1);
+    }
+
+    renderHeatmapOverlay(zoom, lims, maxIdx);
+}
+
+void MapRenderer::invalidateHeatmap() {
+    std::lock_guard<std::mutex> lk(hmMtx_);
+    for (auto& [key, tex] : hmCache_) {
+        if (tex) glDeleteTextures(1, &tex);
+    }
+    hmCache_.clear();
+    hmMissing_.clear();
+    std::cout << "[MapRenderer] Heatmap-кеш сброшен\n";
+}
+
+void MapRenderer::renderHeatmapOverlay(int zoom, const ImPlotRect& lims, int maxIdx) {
+    int x0 = std::max(0,      (int)std::floor(lims.X.Min));
+    int x1 = std::min(maxIdx, (int)std::floor(lims.X.Max));
+    int y0 = std::max(0,      (int)std::floor(lims.Y.Min));
+    int y1 = std::min(maxIdx, (int)std::floor(lims.Y.Max));
+
+    for (int tx = x0; tx <= x1; ++tx) {
+        for (int ty = y0; ty <= y1; ++ty) {
+            std::string key =
+                std::to_string(zoom) + "_" +
+                std::to_string(tx)   + "_" +
+                std::to_string(ty);
+
+            std::lock_guard<std::mutex> lk(hmMtx_);
+
+            if (hmMissing_.count(key)) continue;
+
+            auto it = hmCache_.find(key);
+            if (it != hmCache_.end() && it->second != 0) {
+                ImPlot::PlotImage("##hm",
+                    (void*)(intptr_t)it->second,
+                    ImVec2((double)tx,       (double)(ty + 1)),
+                    ImVec2((double)(tx + 1), (double)ty),
+                    ImVec2(0, 0), ImVec2(1, 1),
+                    ImVec4(1, 1, 1, 0.6f));
+                continue;
+            }
+
+            std::string path =
+                "build/" + std::to_string(zoom) + "/" +
+                std::to_string(tx) + "/" +
+                std::to_string(ty) + "/heatmap.png";
+
+            if (!fs::exists(path)) { hmMissing_.insert(key); continue; }
+
+            int w, h, ch;
+            uint8_t* img = stbi_load(path.c_str(), &w, &h, &ch, 4);
+            if (!img) { hmMissing_.insert(key); continue; }
+
+            GLuint tex = 0;
+            glGenTextures(1, &tex);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                         w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, img);
+            stbi_image_free(img);
+            hmCache_[key] = tex;
+
+            ImPlot::PlotImage("##hm",
+                (void*)(intptr_t)tex,
+                ImVec2((double)tx,       (double)(ty + 1)),
+                ImVec2((double)(tx + 1), (double)ty),
+                ImVec2(0, 0), ImVec2(1, 1),
+                ImVec4(1, 1, 1, 0.6f));
+        }
     }
 }

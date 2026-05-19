@@ -3,11 +3,12 @@
 #include "database.h"
 #include "tile_manager.h"
 #include "map_renderer.h"
+#include "heatmap_generator.h"
 #include "zmq_server.h"
 #include "startup.h"
 #include "gui.h"
 
-int main() {
+int main(int , char** ) {
     curl_global_init(CURL_GLOBAL_ALL);
 
     Database::Config dbCfg;
@@ -15,8 +16,9 @@ int main() {
     Telemetry        shared_data;
     TileManager      tileManager("build");
     MapRenderer      mapRenderer;
+    HeatmapGenerator hmGen("build");
 
-    Startup::loadInitialData(shared_data, db);
+    Startup::loadInitialData(shared_data, db, hmGen);
 
     Gui::State guiState;
     if (shared_data.latitude  != 0.0) guiState.mapLat = shared_data.latitude;
@@ -26,7 +28,7 @@ int main() {
     std::thread serverThread(ZMQServer::run, &shared_data, &db, &stopFlag);
 
     if (Gui::init()) {
-        Gui::runLoop(guiState, shared_data, tileManager, mapRenderer, stopFlag);
+        Gui::runLoop(guiState, shared_data, tileManager, mapRenderer, hmGen, stopFlag);
         Gui::shutdown();
     }
 
